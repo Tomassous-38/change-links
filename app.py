@@ -1,8 +1,7 @@
 import streamlit as st
 import requests
 from docx import Document
-from docx.oxml import OxmlElement
-from docx.oxml.ns import qn
+from io import BytesIO
 
 def get_alternate_url(url, language_code):
     try:
@@ -50,14 +49,7 @@ def update_hyperlinks(doc, target_language_code):
             if 'emrahcinik.com' in url:
                 alternate_url = get_alternate_url(url, target_language_code)
                 if alternate_url:
-                    new_rel = doc.part.rels.add_relationship(
-                        rel.reltype, alternate_url, rel.target_mode
-                    )
-                    # Update the relationship id in the document
-                    for p in doc.paragraphs:
-                        for r in p.runs:
-                            if r.text and url in r.text:
-                                r.text = r.text.replace(url, alternate_url)
+                    rel.target_ref = alternate_url
     return doc
 
 st.title('Document Link Updater')
@@ -73,7 +65,13 @@ if st.button('Update Links'):
         updated_doc = update_hyperlinks(doc, target_language)
         updated_doc_path = f"updated_{uploaded_file.name}"
         updated_doc.save(updated_doc_path)
-        st.success(f"Links updated! Download the updated file below:")
-        st.download_button(label="Download updated file", data=open(updated_doc_path, "rb").read(), file_name=updated_doc_path)
+        
+        with open(updated_doc_path, "rb") as f:
+            btn = st.download_button(
+                label="Download updated file",
+                data=f,
+                file_name=updated_doc_path
+            )
     else:
         st.error("Please upload a file and enter a target language code.")
+
