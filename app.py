@@ -16,7 +16,7 @@ def get_alternate_url(url, language_code):
             if link_start == -1:
                 break
             link_end = html.find('>', link_start)
-            if link_end == -1:
+            if link_end == -1):
                 break
             link_tag = html[link_start:link_end + 1]
             start_idx = link_end + 1
@@ -58,9 +58,43 @@ def update_links(markdown_text, target_language_code):
     updated_text = re.sub(r'\[\d+\]: http.*\n?', '', updated_text)
     return updated_text
 
+st.set_page_config(page_title="Markdown Link Updater")
+
 st.title('Markdown Link Updater')
+
+st.markdown(
+    """
+    <style>
+    .stButton button {
+        color: white;
+        background-color: #007BFF;
+        border-color: #007BFF;
+        border-radius: 5px;
+        padding: 10px 20px;
+        font-size: 16px;
+    }
+    .stButton button:hover {
+        background-color: #0056b3;
+        border-color: #0056b3;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 markdown_text = st.text_area("Paste your markdown text here")
 target_language = st.text_input("Enter target language code (e.g., en, fr, it)")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    if st.button('Paste from Clipboard'):
+        st.experimental_set_query_params()
+        markdown_text = st.experimental_get_query_params().get("text", [""])[0]
+
+with col2:
+    if st.button('Copy to Clipboard'):
+        st.experimental_set_query_params(text=markdown_text)
 
 if st.button('Update Links'):
     if markdown_text and target_language:
