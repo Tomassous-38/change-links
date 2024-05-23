@@ -1,7 +1,5 @@
 import streamlit as st
 import requests
-from docx import Document
-from io import BytesIO
 
 def get_alternate_url(url, language_code):
     try:
@@ -42,36 +40,33 @@ def get_alternate_url(url, language_code):
         st.error(f'Error fetching URL: {e}')
         return None
 
-def update_hyperlinks(doc, target_language_code):
-    for rel in doc.part.rels.values():
-        if "hyperlink" in rel.reltype:
-            url = rel.target_ref
+def update_links(markdown_text, target_language_code):
+    lines = markdown_text.split('\n')
+    updated_lines = []
+    for line in lines:
+        if '](http' in line:
+            start_idx = line.find('](http') + 2
+            end_idx = line.find(')', start_idx)
+            url = line[start_idx:end_idx]
             if 'emrahcinik.com' in url:
                 alternate_url = get_alternate_url(url, target_language_code)
                 if alternate_url:
-                    rel.target_ref = alternate_url
-    return doc
+                    line = line.replace(url, alternate_url)
+        updated_lines.append(line)
+    return '\n'.join(updated_lines)
 
-st.title('Document Link Updater')
-uploaded_file = st.file_uploader("Upload a .docx file", type="docx")
+st.title('Markdown Link Updater')
+uploaded_file = st.file_uploader("Upload a markdown file", type="md")
 target_language = st.text_input("Enter target language code (e.g., en, fr, it)")
 
 if st.button('Update Links'):
     if uploaded_file and target_language:
-        doc_path = f"uploaded_{uploaded_file.name}"
-        with open(doc_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        doc = Document(doc_path)
-        updated_doc = update_hyperlinks(doc, target_language)
-        updated_doc_path = f"updated_{uploaded_file.name}"
-        updated_doc.save(updated_doc_path)
+        markdown_text = uploaded_file.getvalue().decode("utf-8")
+        updated_markdown = update_links(markdown_text, target_language)
         
-        with open(updated_doc_path, "rb") as f:
-            btn = st.download_button(
-                label="Download updated file",
-                data=f,
-                file_name=updated_doc_path
-            )
+        st.success("Links updated! See the updated content below:")
+        st.markdown(updated_markdown)
     else:
         st.error("Please upload a file and enter a target language code.")
+
 
