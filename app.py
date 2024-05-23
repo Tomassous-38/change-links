@@ -16,7 +16,7 @@ def get_alternate_url(url, language_code):
             if link_start == -1:
                 break
             link_end = html.find('>', link_start)
-            if link_end == -1):
+            if link_end == -1:
                 break
             link_tag = html[link_start:link_end + 1]
             start_idx = link_end + 1
