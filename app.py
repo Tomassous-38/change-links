@@ -1,8 +1,8 @@
 import streamlit as st
 import requests
 from docx import Document
-from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 
 def get_alternate_url(url, language_code):
     try:
@@ -50,7 +50,14 @@ def update_hyperlinks(doc, target_language_code):
             if 'emrahcinik.com' in url:
                 alternate_url = get_alternate_url(url, target_language_code)
                 if alternate_url:
-                    rel.target_ref = alternate_url
+                    new_rel = doc.part.rels.add_relationship(
+                        rel.reltype, alternate_url, rel.target_mode
+                    )
+                    # Update the relationship id in the document
+                    for p in doc.paragraphs:
+                        for r in p.runs:
+                            if r.text and url in r.text:
+                                r.text = r.text.replace(url, alternate_url)
     return doc
 
 st.title('Document Link Updater')
