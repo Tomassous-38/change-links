@@ -44,6 +44,7 @@ def get_alternate_url(url, language_code):
 def update_links(markdown_text, target_language_code):
     lines = markdown_text.split('\n')
     updated_lines = []
+    removed_links = []
     for line in lines:
         if '](http' in line:
             start_idx = line.find('](http') + 2
@@ -53,10 +54,14 @@ def update_links(markdown_text, target_language_code):
                 alternate_url = get_alternate_url(url, target_language_code)
                 if alternate_url:
                     line = line.replace(url, alternate_url)
+                else:
+                    removed_links.append(url)
+                    line = line.replace(f'[{url}]', '')
+                    line = line.replace(url, '')
         updated_lines.append(line)
     updated_text = '\n'.join(updated_lines)
     updated_text = re.sub(r'\[\d+\]: http.*\n?', '', updated_text)
-    return updated_text
+    return updated_text, removed_links
 
 st.set_page_config(page_title="Markdown Link Updater")
 
@@ -98,9 +103,15 @@ with col2:
 
 if st.button('Update Links'):
     if markdown_text and target_language:
-        updated_markdown = update_links(markdown_text, target_language)
+        updated_markdown, removed_links = update_links(markdown_text, target_language)
         
         st.success("Links updated! See the updated content below:")
         st.text_area("Updated Markdown", value=updated_markdown, height=400)
+
+        if removed_links:
+            st.warning("The following links were removed as they have no alternate version:")
+            for link in removed_links:
+                st.write(link)
     else:
         st.error("Please paste your markdown text and enter a target language code.")
+
