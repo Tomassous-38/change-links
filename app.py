@@ -56,17 +56,17 @@ def update_links(markdown_text, target_language_code):
     return '\n'.join(updated_lines)
 
 st.title('Markdown Link Updater')
-uploaded_file = st.file_uploader("Upload a markdown file", type="md")
+markdown_text = st.text_area("Paste your markdown text here")
 target_language = st.text_input("Enter target language code (e.g., en, fr, it)")
 
 if st.button('Update Links'):
-    if uploaded_file and target_language:
-        markdown_text = uploaded_file.getvalue().decode("utf-8")
+    if markdown_text and target_language:
         updated_markdown = update_links(markdown_text, target_language)
         
         st.success("Links updated! See the updated content below:")
         st.markdown(updated_markdown)
     else:
-        st.error("Please upload a file and enter a target language code.")
+        st.error("Please paste your markdown text and enter a target language code.")
+
 
 
