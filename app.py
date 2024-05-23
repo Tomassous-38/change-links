@@ -1,0 +1,72 @@
+import streamlit as st
+import requests
+from docx import Document
+
+def get_alternate_url(url, language_code):
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        html = response.text
+
+        alternate_urls = {}
+        start_idx = 0
+
+        while True:
+            link_start = html.find('<link', start_idx)
+            if link_start == -1:
+                break
+            link_end = html.find('>', link_start)
+            if link_end == -1:
+                break
+            link_tag = html[link_start:link_end + 1]
+            start_idx = link_end + 1
+
+            if 'rel="alternate"' in link_tag:
+                hreflang_start = link_tag.find('hreflang="')
+                if hreflang_start != -1:
+                    hreflang_start += len('hreflang="')
+                    hreflang_end = link_tag.find('"', hreflang_start)
+                    hreflang = link_tag[hreflang_start:hreflang_end]
+
+                    href_start = link_tag.find('href="')
+                    if href_start != -1:
+                        href_start += len('href="')
+                        href_end = link_tag.find('"', href_start)
+                        href = link_tag[href_start:href_end]
+
+                        alternate_urls[hreflang] = href
+
+        return alternate_urls.get(language_code)
+    except requests.RequestException as e:
+        st.error(f'Error fetching URL: {e}')
+        return None
+
+def update_links(doc_path, target_language_code):
+    doc = Document(doc_path)
+    for para in doc.paragraphs:
+        for run in para.runs:
+            if run.hyperlink:
+                url = run.hyperlink.target
+                if 'emrahcinik.com' in url:
+                    alternate_url = get_alternate_url(url, target_language_code)
+                    if alternate_url:
+                        run.hyperlink.target = alternate_url
+
+    updated_doc_path = f'updated_{doc_path}'
+    doc.save(updated_doc_path)
+    return updated_doc_path
+
+st.title('Document Link Updater')
+uploaded_file = st.file_uploader("Upload a .docx file", type="docx")
+target_language = st.text_input("Enter target language code (e.g., en, fr, it)")
+
+if st.button('Update Links'):
+    if uploaded_file and target_language:
+        doc_path = f"uploaded_{uploaded_file.name}"
+        with open(doc_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        updated_file_path = update_links(doc_path, target_language)
+        st.success(f"Links updated! Download the updated file below:")
+        st.download_button(label="Download updated file", data=open(updated_file_path, "rb").read(), file_name=updated_file_path)
+    else:
+        st.error("Please upload a file and enter a target language code.")
