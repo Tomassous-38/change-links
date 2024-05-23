@@ -1,6 +1,8 @@
 import streamlit as st
 import requests
 from docx import Document
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
 
 def get_alternate_url(url, language_code):
     try:
@@ -41,20 +43,15 @@ def get_alternate_url(url, language_code):
         st.error(f'Error fetching URL: {e}')
         return None
 
-def update_links(doc_path, target_language_code):
-    doc = Document(doc_path)
-    for para in doc.paragraphs:
-        for run in para.runs:
-            if run.hyperlink:
-                url = run.hyperlink.target
-                if 'emrahcinik.com' in url:
-                    alternate_url = get_alternate_url(url, target_language_code)
-                    if alternate_url:
-                        run.hyperlink.target = alternate_url
-
-    updated_doc_path = f'updated_{doc_path}'
-    doc.save(updated_doc_path)
-    return updated_doc_path
+def update_hyperlinks(doc, target_language_code):
+    for rel in doc.part.rels.values():
+        if "hyperlink" in rel.reltype:
+            url = rel.target_ref
+            if 'emrahcinik.com' in url:
+                alternate_url = get_alternate_url(url, target_language_code)
+                if alternate_url:
+                    rel.target_ref = alternate_url
+    return doc
 
 st.title('Document Link Updater')
 uploaded_file = st.file_uploader("Upload a .docx file", type="docx")
@@ -65,8 +62,11 @@ if st.button('Update Links'):
         doc_path = f"uploaded_{uploaded_file.name}"
         with open(doc_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
-        updated_file_path = update_links(doc_path, target_language)
+        doc = Document(doc_path)
+        updated_doc = update_hyperlinks(doc, target_language)
+        updated_doc_path = f"updated_{uploaded_file.name}"
+        updated_doc.save(updated_doc_path)
         st.success(f"Links updated! Download the updated file below:")
-        st.download_button(label="Download updated file", data=open(updated_file_path, "rb").read(), file_name=updated_file_path)
+        st.download_button(label="Download updated file", data=open(updated_doc_path, "rb").read(), file_name=updated_doc_path)
     else:
         st.error("Please upload a file and enter a target language code.")
