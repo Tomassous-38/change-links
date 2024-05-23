@@ -1,5 +1,6 @@
 import streamlit as st
 import requests
+import re
 
 def get_alternate_url(url, language_code):
     try:
@@ -41,7 +42,6 @@ def get_alternate_url(url, language_code):
         return None
 
 def update_links(markdown_text, target_language_code):
-    import re
     lines = markdown_text.split('\n')
     updated_lines = []
     for line in lines:
@@ -58,24 +58,6 @@ def update_links(markdown_text, target_language_code):
     updated_text = re.sub(r'\[\d+\]: http.*\n?', '', updated_text)
     return updated_text
 
-st.markdown(
-    """
-    <style>
-    .reportview-container .main .block-container {
-        color: white;
-        background-color: #0e1117;
-    }
-    .markdown-text-container {
-        background-color: #0e1117;
-        color: white;
-        padding: 10px;
-        border-radius: 5px;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
 st.title('Markdown Link Updater')
 markdown_text = st.text_area("Paste your markdown text here")
 target_language = st.text_input("Enter target language code (e.g., en, fr, it)")
@@ -85,12 +67,6 @@ if st.button('Update Links'):
         updated_markdown = update_links(markdown_text, target_language)
         
         st.success("Links updated! See the updated content below:")
-        st.markdown(
-            f'<div class="markdown-text-container">{updated_markdown}</div>', 
-            unsafe_allow_html=True
-        )
+        st.text_area("Updated Markdown", value=updated_markdown, height=400)
     else:
         st.error("Please paste your markdown text and enter a target language code.")
-
-
-
