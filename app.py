@@ -2,11 +2,21 @@ import streamlit as st
 import requests
 import re
 
-def get_alternate_url(url, language_code):
+def check_url(url):
+    try:
+        response = requests.get(url)
+        return response.status_code == 200
+    except requests.RequestException:
+        return False
+
+def get_alternate_url(url, language_code, debug):
     try:
         response = requests.get(url)
         response.raise_for_status()
         html = response.text
+
+        if debug:
+            st.write(f"Fetching alternates for: {url}")
 
         alternate_urls = {}
         start_idx = 0
@@ -36,12 +46,16 @@ def get_alternate_url(url, language_code):
 
                         alternate_urls[hreflang] = href
 
-        return alternate_urls.get(language_code)
+        alternate_url = alternate_urls.get(language_code)
+        if debug:
+            st.write(f"Alternate URL found: {alternate_url}" if alternate_url else "No alternate URL found.")
+        return alternate_url
     except requests.RequestException as e:
-        st.error(f'Error fetching URL: {e}')
+        if debug:
+            st.error(f'Error fetching URL: {e}')
         return None
 
-def update_links(markdown_text, target_language_code):
+def update_links(markdown_text, target_language_code, debug):
     lines = markdown_text.split('\n')
     updated_lines = []
     removed_links = []
@@ -51,9 +65,14 @@ def update_links(markdown_text, target_language_code):
             end_idx = line.find(')', start_idx)
             url = line[start_idx:end_idx]
             if 'emrahcinik.com' in url:
-                alternate_url = get_alternate_url(url, target_language_code)
-                if alternate_url:
-                    line = line.replace(url, alternate_url)
+                if check_url(url):
+                    alternate_url = get_alternate_url(url, target_language_code, debug)
+                    if alternate_url:
+                        line = line.replace(url, alternate_url)
+                    else:
+                        removed_links.append(url)
+                        line = line.replace(f'[{url}]', '')
+                        line = line.replace(url, '')
                 else:
                     removed_links.append(url)
                     line = line.replace(f'[{url}]', '')
@@ -89,6 +108,7 @@ st.markdown(
 
 markdown_text = st.text_area("Paste your markdown text here")
 target_language = st.text_input("Enter target language code (e.g., en, fr, it)")
+debug = st.checkbox("Debug mode")
 
 col1, col2 = st.columns(2)
 
@@ -103,15 +123,20 @@ with col2:
 
 if st.button('Update Links'):
     if markdown_text and target_language:
-        updated_markdown, removed_links = update_links(markdown_text, target_language)
-        
+        if debug:
+            st.write("Starting link update process...")
+
+        updated_markdown, removed_links = update_links(markdown_text, target_language, debug)
+
+        if debug:
+            st.write("Link update process completed.")
+
         st.success("Links updated! See the updated content below:")
         st.text_area("Updated Markdown", value=updated_markdown, height=400)
 
         if removed_links:
-            st.warning("The following links were removed as they have no alternate version:")
+            st.warning("The following links were removed as they have no alternate version or returned a non-200 status code:")
             for link in removed_links:
                 st.write(link)
     else:
         st.error("Please paste your markdown text and enter a target language code.")
-
