@@ -2,7 +2,7 @@ import streamlit as st
 import aiohttp
 import asyncio
 import re
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 from bs4 import BeautifulSoup
 from time import sleep
 
@@ -13,12 +13,12 @@ def extract_domain(url):
         domain = domain[4:]
     return domain
 
-async def fetch(session, url):
+async def fetch(session, url, allow_redirects=True):
     try:
-        async with session.get(url) as response:
-            return url, response.status, await response.text()
+        async with session.get(url, allow_redirects=allow_redirects) as response:
+            return url, response.status, await response.text(), str(response.url)
     except Exception as e:
-        return url, None, str(e)
+        return url, None, str(e), None
 
 async def check_urls(urls):
     async with aiohttp.ClientSession() as session:
@@ -34,21 +34,21 @@ def get_all_links_from_domain(markdown_text, domain):
     link_pattern = re.compile(r'\[([^\]]+)\]\((https?://[^\s)]+)\)')
     for match in link_pattern.finditer(markdown_text):
         alt_text, url = match.groups()
-        if domain in urlparse(url).netloc:
+        if domain in extract_domain(url):
             if url.endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg')):
                 images.add(url)
             else:
                 links.add(url)
     return links, images
 
-async def get_alternate_urls(session, urls, language_code, debug_messages, console_placeholder):
+async def get_alternate_urls(session, urls, domain, language_code, debug_messages, console_placeholder):
     tasks = []
     for url in urls:
         tasks.append(fetch(session, url))
     results = await asyncio.gather(*tasks)
     
     alternate_urls = {}
-    for url, status, html in results:
+    for url, status, html, final_url in results:
         if status == 200:
             alternate_urls[url] = ""
             soup = BeautifulSoup(html, 'html.parser')
@@ -56,9 +56,21 @@ async def get_alternate_urls(session, urls, language_code, debug_messages, conso
                 hreflang = link.get('hreflang')
                 href = link.get('href')
                 if hreflang and href:
-                    if hreflang == language_code:
-                        alternate_urls[url] = href
+                    full_href = urljoin(url, href)
+                    if hreflang == language_code and extract_domain(full_href) == domain:
+                        alternate_urls[url] = full_href
                         break
+            # Verify the alternate URL
+            if alternate_urls[url]:
+                _, final_status, _, final_url = await fetch(session, alternate_urls[url])
+                if final_status == 200:
+                    alternate_urls[url] = final_url
+                elif final_status == 404:
+                    alternate_urls[url] = ""
+                    debug_messages.append(f"❌ Alternate URL not found (404): {alternate_urls[url]}")
+                else:
+                    alternate_urls[url] = ""
+                    debug_messages.append(f"❌ Alternate URL invalid: {alternate_urls[url]}")
         else:
             alternate_urls[url] = None
         debug_messages.append(f"🔍 Fetched {url}: {status}")
@@ -78,11 +90,11 @@ async def update_links(markdown_text, domain, target_language_code, debug_messag
         valid_links = []
         tasks = [fetch(session, url) for url in all_links]
         results = await asyncio.gather(*tasks)
-        for url, status, _ in results:
+        for url, status, _, final_url in results:
             if status == 200:
                 valid_links.append(url)
 
-        alternate_urls = await get_alternate_urls(session, valid_links, target_language_code, debug_messages, console_placeholder)
+        alternate_urls = await get_alternate_urls(session, valid_links, domain, target_language_code, debug_messages, console_placeholder)
     
     updated_lines = []
     removed_links = []
