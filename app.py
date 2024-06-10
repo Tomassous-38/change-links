@@ -20,21 +20,13 @@ async def fetch(session, url, allow_redirects=True):
     except Exception as e:
         return url, None, str(e), None
 
-async def check_urls(urls):
-    async with aiohttp.ClientSession() as session:
-        tasks = []
-        for url in urls:
-            tasks.append(fetch(session, url))
-        results = await asyncio.gather(*tasks)
-    return results
-
 def get_all_links_from_domain(markdown_text, domain):
     links = set()
     images = set()
     link_pattern = re.compile(r'\[([^\]]+)\]\((https?://[^\s)]+)\)')
     for match in link_pattern.finditer(markdown_text):
         alt_text, url = match.groups()
-        if domain in extract_domain(url):
+        if extract_domain(url) == domain:
             if url.endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg')):
                 images.add(url)
             else:
