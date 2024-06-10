@@ -34,7 +34,7 @@ def get_all_links_from_domain(markdown_text, domain):
             links.add(url)
     return links
 
-async def get_alternate_urls(session, urls, language_code, debug_messages):
+async def get_alternate_urls(session, urls, language_code, debug_messages, console_placeholder):
     tasks = []
     for url in urls:
         tasks.append(fetch(session, url))
@@ -53,12 +53,17 @@ async def get_alternate_urls(session, urls, language_code, debug_messages):
                         alternate_urls[url] = href
                         break
         debug_messages.append(f"🔍 Fetched {url}: {status}")
+        console_output = "\n".join(debug_messages)
+        console_placeholder.markdown(f'<div class="console-output terminal">{console_output}</div>', unsafe_allow_html=True)
+        await asyncio.sleep(0.2)  # Simulate typing effect
     return alternate_urls
 
-async def update_links(markdown_text, domain, target_language_code, debug_messages):
+async def update_links(markdown_text, domain, target_language_code, debug_messages, console_placeholder):
     all_links = get_all_links_from_domain(markdown_text, domain)
     
     debug_messages.append(f"🔗 Total {len(all_links)} links found in the markdown text.")
+    console_output = "\n".join(debug_messages)
+    console_placeholder.markdown(f'<div class="console-output terminal">{console_output}</div>', unsafe_allow_html=True)
 
     async with aiohttp.ClientSession() as session:
         valid_links = []
@@ -68,7 +73,7 @@ async def update_links(markdown_text, domain, target_language_code, debug_messag
             if status == 200:
                 valid_links.append(url)
 
-        alternate_urls = await get_alternate_urls(session, valid_links, target_language_code, debug_messages)
+        alternate_urls = await get_alternate_urls(session, valid_links, target_language_code, debug_messages, console_placeholder)
     
     updated_lines = []
     removed_links = []
@@ -101,9 +106,10 @@ st.markdown(
         background-color: #2E2E2E;
         color: #FFFFFF;
         font-family: monospace;
+        padding-top: 3rem;
     }
     .block-container {
-        padding: 0;
+        padding-top: 2rem;
     }
     .stButton button {
         color: #FFFFFF;
@@ -147,9 +153,11 @@ if st.button('Update Links'):
         debug_messages.append(f"🔍 Extracted domain: {domain}")
         debug_messages.append("⏳ Starting link update process...")
 
+        console_placeholder = st.empty()
+
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        updated_markdown, removed_links, alternate_urls = loop.run_until_complete(update_links(markdown_text, domain, target_language, debug_messages))
+        updated_markdown, removed_links, alternate_urls = loop.run_until_complete(update_links(markdown_text, domain, target_language, debug_messages, console_placeholder))
         loop.close()
 
         debug_messages.append("✅ Link update process completed!")
@@ -162,12 +170,9 @@ if st.button('Update Links'):
             for link in removed_links:
                 debug_messages.append(link)
 
-        # Display console output with a typing effect
-        console_output = ""
-        for message in debug_messages:
-            console_output += f"{message}\n"
-            st.markdown(f'<div class="console-output terminal">{console_output}</div>', unsafe_allow_html=True)
-            sleep(0.2)  # Simulate typing effect
+        # Display final console output
+        console_output = "\n".join(debug_messages)
+        console_placeholder.markdown(f'<div class="console-output terminal">{console_output}</div>', unsafe_allow_html=True)
 
         # Display table of links and their alternatives
         st.markdown("### Links and their Alternatives")
