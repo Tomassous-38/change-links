@@ -1,6 +1,11 @@
 import streamlit as st
 import requests
 import re
+from urllib.parse import urlparse
+
+def extract_domain(url):
+    parsed_url = urlparse(url)
+    return parsed_url.netloc
 
 def check_url(url):
     try:
@@ -55,7 +60,7 @@ def get_alternate_url(url, language_code, debug):
             st.error(f'Error fetching URL: {e}')
         return None
 
-def update_links(markdown_text, target_language_code, debug):
+def update_links(markdown_text, domain, target_language_code, debug):
     lines = markdown_text.split('\n')
     updated_lines = []
     removed_links = []
@@ -64,7 +69,7 @@ def update_links(markdown_text, target_language_code, debug):
             start_idx = line.find('](http') + 2
             end_idx = line.find(')', start_idx)
             url = line[start_idx:end_idx]
-            if 'emrahcinik.com' in url:
+            if domain in url:
                 if check_url(url):
                     alternate_url = get_alternate_url(url, target_language_code, debug)
                     if alternate_url:
@@ -107,6 +112,7 @@ st.markdown(
 )
 
 markdown_text = st.text_area("Paste your markdown text here")
+domain_input = st.text_input("Enter the domain (or any URL from the domain) to check")
 target_language = st.text_input("Enter target language code (e.g., en, fr, it)")
 debug = st.checkbox("Debug mode")
 
@@ -122,11 +128,15 @@ with col2:
         st.experimental_set_query_params(text=markdown_text)
 
 if st.button('Update Links'):
-    if markdown_text and target_language:
+    if markdown_text and domain_input and target_language:
+        domain = extract_domain(domain_input)
+        if debug:
+            st.write(f"Extracted domain: {domain}")
+
         if debug:
             st.write("Starting link update process...")
 
-        updated_markdown, removed_links = update_links(markdown_text, target_language, debug)
+        updated_markdown, removed_links = update_links(markdown_text, domain, target_language, debug)
 
         if debug:
             st.write("Link update process completed.")
@@ -139,4 +149,5 @@ if st.button('Update Links'):
             for link in removed_links:
                 st.write(link)
     else:
-        st.error("Please paste your markdown text and enter a target language code.")
+        st.error("Please paste your markdown text, enter a domain, and enter a target language code.")
+
