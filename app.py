@@ -3,6 +3,7 @@ import aiohttp
 import asyncio
 import re
 from urllib.parse import urlparse, urljoin
+
 from bs4 import BeautifulSoup
 
 MAX_REDIRECTS = 4
@@ -118,7 +119,7 @@ async def update_links(markdown_text, domain, target_language_code, debug_messag
                 else:
                     alternate_url = final_alternate_urls.get(url)
                     if alternate_url:
-                        line = line.replace(url, alternate_url)
+                        line = re.sub(re.escape(url), alternate_url, line)
                     else:
                         removed_links.append(url)
                         line = line.replace(f'[{url}]', '')
