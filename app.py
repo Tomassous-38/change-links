@@ -135,51 +135,43 @@ st.markdown(
 
 st.title('Markdown Link Updater')
 
-col1, col2 = st.columns([1, 3])
+markdown_text = st.text_area("Paste your markdown text here")
+domain_input = st.text_input("Enter the domain (or any URL from the domain) to check")
+target_language = st.text_input("Enter target language code (e.g., en, fr, it)")
+debug = True
 
-with col1:
-    st.markdown("### Console")
-    console_placeholder = st.empty()
+if st.button('Update Links'):
+    if markdown_text and domain_input and target_language:
+        domain = extract_domain(domain_input)
+        debug_messages = ["👋 Hi there! Let's get started."]
+        debug_messages.append(f"🔍 Extracted domain: {domain}")
+        debug_messages.append("⏳ Starting link update process...")
 
-with col2:
-    st.markdown("### Input")
-    markdown_text = st.text_area("Paste your markdown text here")
-    domain_input = st.text_input("Enter the domain (or any URL from the domain) to check")
-    target_language = st.text_input("Enter target language code (e.g., en, fr, it)")
-    debug = True
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        updated_markdown, removed_links, alternate_urls = loop.run_until_complete(update_links(markdown_text, domain, target_language, debug_messages))
+        loop.close()
 
-    if st.button('Update Links'):
-        if markdown_text and domain_input and target_language:
-            domain = extract_domain(domain_input)
-            debug_messages = ["👋 Hi there! Let's get started."]
-            debug_messages.append(f"🔍 Extracted domain: {domain}")
-            debug_messages.append("⏳ Starting link update process...")
+        debug_messages.append("✅ Link update process completed!")
 
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            updated_markdown, removed_links, alternate_urls = loop.run_until_complete(update_links(markdown_text, domain, target_language, debug_messages))
-            loop.close()
+        st.success("Links updated! See the updated content below:")
+        st.text_area("Updated Markdown", value=updated_markdown, height=400)
 
-            debug_messages.append("✅ Link update process completed!")
+        if removed_links:
+            debug_messages.append("🗑️ The following links were removed as they have no alternate version or returned a non-200 status code:")
+            for link in removed_links:
+                debug_messages.append(link)
 
-            st.success("Links updated! See the updated content below:")
-            st.text_area("Updated Markdown", value=updated_markdown, height=400)
+        # Display console output with a typing effect
+        console_output = ""
+        for message in debug_messages:
+            console_output += f"{message}\n"
+            st.markdown(f'<div class="console-output terminal">{console_output}</div>', unsafe_allow_html=True)
+            sleep(0.2)  # Simulate typing effect
 
-            if removed_links:
-                debug_messages.append("🗑️ The following links were removed as they have no alternate version or returned a non-200 status code:")
-                for link in removed_links:
-                    debug_messages.append(link)
-
-            # Display console output with a typing effect
-            console_output = ""
-            for message in debug_messages:
-                console_output += f"{message}\n"
-                console_placeholder.markdown(f'<div class="console-output">{console_output}</div>', unsafe_allow_html=True)
-                sleep(0.2)  # Simulate typing effect
-
-            # Display table of links and their alternatives
-            st.markdown("### Links and their Alternatives")
-            data = [{"Original Link": url, "Alternate Link": alt_url} for url, alt_url in alternate_urls.items()]
-            st.table(data)
-        else:
-            st.error("Please paste your markdown text, enter a domain, and enter a target language code.")
+        # Display table of links and their alternatives
+        st.markdown("### Links and their Alternatives")
+        data = [{"Original Link": url, "Alternate Link": alt_url} for url, alt_url in alternate_urls.items()]
+        st.table(data)
+    else:
+        st.error("Please paste your markdown text, enter a domain, and enter a target language code.")
