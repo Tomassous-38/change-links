@@ -34,7 +34,7 @@ def get_all_links_from_domain(markdown_text, domain):
             links.add(url)
     return links
 
-async def get_alternate_urls(session, urls, language_code, debug):
+async def get_alternate_urls(session, urls, language_code, debug_messages):
     tasks = []
     for url in urls:
         tasks.append(fetch(session, url))
@@ -52,15 +52,13 @@ async def get_alternate_urls(session, urls, language_code, debug):
                     if hreflang == language_code:
                         alternate_urls[url] = href
                         break
-        if debug:
-            st.write(f"Fetched {url}: {status}")
+        debug_messages.append(f"Fetched {url}: {status}")
     return alternate_urls
 
-async def update_links(markdown_text, domain, target_language_code, debug):
+async def update_links(markdown_text, domain, target_language_code, debug_messages):
     all_links = get_all_links_from_domain(markdown_text, domain)
     
-    if debug:
-        st.write(f"Total {len(all_links)} links found in the markdown text.")
+    debug_messages.append(f"Total {len(all_links)} links found in the markdown text.")
 
     async with aiohttp.ClientSession() as session:
         valid_links = []
@@ -70,7 +68,7 @@ async def update_links(markdown_text, domain, target_language_code, debug):
             if status == 200:
                 valid_links.append(url)
 
-        alternate_urls = await get_alternate_urls(session, valid_links, target_language_code, debug)
+        alternate_urls = await get_alternate_urls(session, valid_links, target_language_code, debug_messages)
     
     updated_lines = []
     removed_links = []
@@ -92,17 +90,23 @@ async def update_links(markdown_text, domain, target_language_code, debug):
     
     updated_text = '\n'.join(updated_lines)
     updated_text = re.sub(r'\[\d+\]: http.*\n?', '', updated_text)
-    return updated_text, removed_links
+    return updated_text, removed_links, alternate_urls
 
 st.set_page_config(page_title="Markdown Link Updater")
-
-st.title('Markdown Link Updater')
 
 st.markdown(
     """
     <style>
+    body {
+        background-color: #2E2E2E;
+        color: #FFFFFF;
+        font-family: monospace;
+    }
+    .block-container {
+        padding: 0;
+    }
     .stButton button {
-        color: white;
+        color: #FFFFFF;
         background-color: #007BFF;
         border-color: #007BFF;
         border-radius: 5px;
@@ -113,50 +117,64 @@ st.markdown(
         background-color: #0056b3;
         border-color: #0056b3;
     }
+    .terminal {
+        background-color: #1E1E1E;
+        padding: 10px;
+        border-radius: 5px;
+        margin-bottom: 20px;
+    }
+    .console-output {
+        font-family: monospace;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+    }
     </style>
     """,
     unsafe_allow_html=True
 )
 
-markdown_text = st.text_area("Paste your markdown text here")
-domain_input = st.text_input("Enter the domain (or any URL from the domain) to check")
-target_language = st.text_input("Enter target language code (e.g., en, fr, it)")
-debug = st.checkbox("Debug mode")
+st.title('Markdown Link Updater')
 
-col1, col2 = st.columns(2)
+col1, col2 = st.columns([1, 3])
 
 with col1:
-    if st.button('Paste from Clipboard'):
-        st.experimental_set_query_params()
-        markdown_text = st.experimental_get_query_params().get("text", [""])[0]
+    st.markdown("### Console")
+    console_placeholder = st.empty()
 
 with col2:
-    if st.button('Copy to Clipboard'):
-        st.experimental_set_query_params(text=markdown_text)
+    st.markdown("### Input")
+    markdown_text = st.text_area("Paste your markdown text here")
+    domain_input = st.text_input("Enter the domain (or any URL from the domain) to check")
+    target_language = st.text_input("Enter target language code (e.g., en, fr, it)")
+    debug = True
 
-if st.button('Update Links'):
-    if markdown_text and domain_input and target_language:
-        domain = extract_domain(domain_input)
-        if debug:
-            st.write(f"Extracted domain: {domain}")
+    if st.button('Update Links'):
+        if markdown_text and domain_input and target_language:
+            domain = extract_domain(domain_input)
+            debug_messages = [f"Extracted domain: {domain}"]
+            debug_messages.append("Starting link update process...")
 
-        if debug:
-            st.write("Starting link update process...")
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            updated_markdown, removed_links, alternate_urls = loop.run_until_complete(update_links(markdown_text, domain, target_language, debug_messages))
+            loop.close()
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        updated_markdown, removed_links = loop.run_until_complete(update_links(markdown_text, domain, target_language, debug))
-        loop.close()
+            debug_messages.append("Link update process completed.")
 
-        if debug:
-            st.write("Link update process completed.")
+            st.success("Links updated! See the updated content below:")
+            st.text_area("Updated Markdown", value=updated_markdown, height=400)
 
-        st.success("Links updated! See the updated content below:")
-        st.text_area("Updated Markdown", value=updated_markdown, height=400)
+            if removed_links:
+                debug_messages.append("The following links were removed as they have no alternate version or returned a non-200 status code:")
+                for link in removed_links:
+                    debug_messages.append(link)
 
-        if removed_links:
-            st.warning("The following links were removed as they have no alternate version or returned a non-200 status code:")
-            for link in removed_links:
-                st.write(link)
-    else:
-        st.error("Please paste your markdown text, enter a domain, and enter a target language code.")
+            # Display console output
+            console_placeholder.markdown(f'<div class="console-output">{"<br>".join(debug_messages)}</div>', unsafe_allow_html=True)
+
+            # Display table of links and their alternatives
+            st.markdown("### Links and their Alternatives")
+            data = [{"Original Link": url, "Alternate Link": alt_url} for url, alt_url in alternate_urls.items()]
+            st.table(data)
+        else:
+            st.error("Please paste your markdown text, enter a domain, and enter a target language code.")
