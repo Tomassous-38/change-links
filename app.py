@@ -71,7 +71,7 @@ async def update_links(markdown_text, domain, target_language_code, debug_messag
         tasks = [fetch(session, url, allow_redirects=True) for url in all_links]
         results = await asyncio.gather(*tasks)
         for url, status, final_url, _ in results:
-            if status == 200:
+            if status == 200 and extract_domain(final_url).endswith(domain):
                 valid_links.append(final_url)
 
         alternate_urls = await get_alternate_urls(session, valid_links, target_language_code, debug_messages, console_placeholder)
