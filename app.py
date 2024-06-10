@@ -28,10 +28,11 @@ async def check_urls(urls, allow_redirects=True):
 def get_all_links_from_domain(markdown_text, domain):
     links = set()
     link_pattern = re.compile(r'\[([^\]]+)\]\((https?://[^\s)]+)\)')
+    domain_pattern = re.compile(rf'^(https?://)?([a-zA-Z0-9-]+\.)*{re.escape(domain)}')
     for match in link_pattern.finditer(markdown_text):
         alt_text, url = match.groups()
         parsed_url = urlparse(url)
-        if domain in parsed_url.netloc and not url.endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg')):
+        if domain_pattern.match(parsed_url.netloc) and not url.endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg')):
             links.add(url)
     return links
 
