@@ -4,10 +4,13 @@ import asyncio
 import re
 from urllib.parse import urlparse, urljoin
 from bs4 import BeautifulSoup
-from time import sleep
 
-def extract_domain(url):
-    parsed_url = urlparse(url)
+MAX_REDIRECTS = 4
+
+def normalize_domain(domain):
+    if not domain.startswith('http://') and not domain.startswith('https://'):
+        domain = 'https://' + domain
+    parsed_url = urlparse(domain)
     return parsed_url.netloc
 
 def is_same_domain(url, domain):
@@ -16,18 +19,20 @@ def is_same_domain(url, domain):
     url_parts = parsed_url.netloc.split('.')
     return url_parts[-len(domain_parts):] == domain_parts
 
-async def fetch(session, url, allow_redirects=True):
+async def fetch(session, url, allow_redirects=True, max_redirects=MAX_REDIRECTS):
     try:
         async with session.get(url, allow_redirects=allow_redirects) as response:
+            if response.status == 301 and max_redirects > 0:
+                new_url = response.headers.get('Location')
+                if new_url:
+                    return await fetch(session, new_url, allow_redirects=allow_redirects, max_redirects=max_redirects - 1)
             return url, response.status, str(response.url), await response.text()
     except Exception as e:
         return url, None, None, str(e)
 
 async def check_urls(urls, allow_redirects=True):
     async with aiohttp.ClientSession() as session:
-        tasks = []
-        for url in urls:
-            tasks.append(fetch(session, url, allow_redirects=allow_redirects))
+        tasks = [fetch(session, url, allow_redirects=allow_redirects) for url in urls]
         results = await asyncio.gather(*tasks)
     return results
 
@@ -36,17 +41,12 @@ def get_all_links_from_domain(markdown_text, domain):
     link_pattern = re.compile(r'\[([^\]]+)\]\((https?://[^\s)]+)\)')
     for match in link_pattern.finditer(markdown_text):
         alt_text, url = match.groups()
-        parsed_url = urlparse(url)
         if is_same_domain(url, domain) and not url.endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg')):
             links.add(url)
-        else:
-            print(f"Ignored URL: {url} (parsed netloc: {parsed_url.netloc}, domain: {domain})")
     return links
 
 async def get_alternate_urls(session, urls, language_code, debug_messages, console_placeholder):
-    tasks = []
-    for url in urls:
-        tasks.append(fetch(session, url))
+    tasks = [fetch(session, url) for url in urls]
     results = await asyncio.gather(*tasks)
     
     alternate_urls = {}
@@ -81,6 +81,11 @@ async def update_links(markdown_text, domain, target_language_code, debug_messag
         for url, status, final_url, _ in results:
             if status == 200 and is_same_domain(final_url, domain):
                 valid_links.append(final_url)
+            elif status == 301:
+                debug_messages.append(f"🔄 {url} redirected to {final_url}")
+                console_output = "\n".join(debug_messages)
+                console_placeholder.markdown(f'<div class="console-output terminal">{console_output}</div>', unsafe_allow_html=True)
+                valid_links.append(final_url)
 
         alternate_urls = await get_alternate_urls(session, valid_links, target_language_code, debug_messages, console_placeholder)
 
@@ -91,6 +96,16 @@ async def update_links(markdown_text, domain, target_language_code, debug_messag
                 for alt_url, alt_status, alt_final_url, _ in alt_results:
                     if alt_status == 200:
                         final_alternate_urls[url] = alt_final_url
+                    elif alt_status == 301:
+                        debug_messages.append(f"🔄 Alternate {alt_url} redirected to {alt_final_url}")
+                        console_output = "\n".join(debug_messages)
+                        console_placeholder.markdown(f'<div class="console-output terminal">{console_output}</div>', unsafe_allow_html=True)
+                        final_alternate_urls[url] = alt_final_url
+                    elif alt_status == 404:
+                        debug_messages.append(f"❗ Alternate {alt_url} returned 404")
+                        console_output = "\n".join(debug_messages)
+                        console_placeholder.markdown(f'<div class="console-output terminal">{console_output}</div>', unsafe_allow_html=True)
+                        final_alternate_urls[url] = alt_url
 
     updated_lines = []
     removed_links = []
@@ -165,7 +180,7 @@ debug = True
 
 if st.button('Update Links'):
     if markdown_text and domain_input and target_language:
-        domain = extract_domain(domain_input)
+        domain = normalize_domain(domain_input)
         debug_messages = ["👋 Hi there! Let's get started."]
         debug_messages.append(f"🔍 Extracted domain: {domain}")
         debug_messages.append("⏳ Starting link update process...")
