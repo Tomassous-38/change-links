@@ -52,13 +52,13 @@ async def get_alternate_urls(session, urls, language_code, debug_messages):
                     if hreflang == language_code:
                         alternate_urls[url] = href
                         break
-        debug_messages.append(f"Fetched {url}: {status}")
+        debug_messages.append(f"🔍 Fetched {url}: {status}")
     return alternate_urls
 
 async def update_links(markdown_text, domain, target_language_code, debug_messages):
     all_links = get_all_links_from_domain(markdown_text, domain)
     
-    debug_messages.append(f"Total {len(all_links)} links found in the markdown text.")
+    debug_messages.append(f"🔗 Total {len(all_links)} links found in the markdown text.")
 
     async with aiohttp.ClientSession() as session:
         valid_links = []
@@ -151,26 +151,31 @@ with col2:
     if st.button('Update Links'):
         if markdown_text and domain_input and target_language:
             domain = extract_domain(domain_input)
-            debug_messages = [f"Extracted domain: {domain}"]
-            debug_messages.append("Starting link update process...")
+            debug_messages = ["👋 Hi there! Let's get started."]
+            debug_messages.append(f"🔍 Extracted domain: {domain}")
+            debug_messages.append("⏳ Starting link update process...")
 
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             updated_markdown, removed_links, alternate_urls = loop.run_until_complete(update_links(markdown_text, domain, target_language, debug_messages))
             loop.close()
 
-            debug_messages.append("Link update process completed.")
+            debug_messages.append("✅ Link update process completed!")
 
             st.success("Links updated! See the updated content below:")
             st.text_area("Updated Markdown", value=updated_markdown, height=400)
 
             if removed_links:
-                debug_messages.append("The following links were removed as they have no alternate version or returned a non-200 status code:")
+                debug_messages.append("🗑️ The following links were removed as they have no alternate version or returned a non-200 status code:")
                 for link in removed_links:
                     debug_messages.append(link)
 
-            # Display console output
-            console_placeholder.markdown(f'<div class="console-output">{"<br>".join(debug_messages)}</div>', unsafe_allow_html=True)
+            # Display console output with a typing effect
+            console_output = ""
+            for message in debug_messages:
+                console_output += f"{message}\n"
+                console_placeholder.markdown(f'<div class="console-output">{console_output}</div>', unsafe_allow_html=True)
+                sleep(0.2)  # Simulate typing effect
 
             # Display table of links and their alternatives
             st.markdown("### Links and their Alternatives")
