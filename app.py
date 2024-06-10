@@ -27,10 +27,10 @@ async def check_urls(urls):
 
 def get_all_links_from_domain(markdown_text, domain):
     links = set()
-    link_pattern = re.compile(r'\[.*?\]\((https?://[^\s)]+)\)')
+    link_pattern = re.compile(r'\[([^\]]+)\]\((https?://[^\s)]+)\)')
     for match in link_pattern.finditer(markdown_text):
-        url = match.group(1)
-        if domain in url:
+        alt_text, url = match.groups()
+        if domain in url and not url.endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg')):
             links.add(url)
     return links
 
