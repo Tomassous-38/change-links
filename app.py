@@ -36,8 +36,11 @@ def get_all_links_from_domain(markdown_text, domain):
     link_pattern = re.compile(r'\[([^\]]+)\]\((https?://[^\s)]+)\)')
     for match in link_pattern.finditer(markdown_text):
         alt_text, url = match.groups()
+        parsed_url = urlparse(url)
         if is_same_domain(url, domain) and not url.endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg')):
             links.add(url)
+        else:
+            print(f"Ignored URL: {url} (parsed netloc: {parsed_url.netloc}, domain: {domain})")
     return links
 
 async def get_alternate_urls(session, urls, language_code, debug_messages, console_placeholder):
