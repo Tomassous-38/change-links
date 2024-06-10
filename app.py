@@ -1,20 +1,29 @@
 import streamlit as st
-import requests
+import aiohttp
+import asyncio
 import re
 from urllib.parse import urlparse
-from time import sleep
 from bs4 import BeautifulSoup
+from time import sleep
 
 def extract_domain(url):
     parsed_url = urlparse(url)
     return parsed_url.netloc
 
-def check_url(url):
+async def fetch(session, url):
     try:
-        response = requests.get(url)
-        return response.status_code == 200
-    except requests.RequestException:
-        return False
+        async with session.get(url) as response:
+            return url, response.status, await response.text()
+    except Exception as e:
+        return url, None, str(e)
+
+async def check_urls(urls):
+    async with aiohttp.ClientSession() as session:
+        tasks = []
+        for url in urls:
+            tasks.append(fetch(session, url))
+        results = await asyncio.gather(*tasks)
+    return results
 
 def get_all_links_from_domain(markdown_text, domain):
     links = set()
@@ -25,69 +34,46 @@ def get_all_links_from_domain(markdown_text, domain):
             links.add(url)
     return links
 
-def get_alternate_url(url, language_code, debug):
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        html = response.text
-
+async def get_alternate_urls(session, urls, language_code, debug):
+    tasks = []
+    for url in urls:
+        tasks.append(fetch(session, url))
+    results = await asyncio.gather(*tasks)
+    
+    alternate_urls = {}
+    for url, status, html in results:
+        if status == 200:
+            alternate_urls[url] = None
+            soup = BeautifulSoup(html, 'html.parser')
+            for link in soup.find_all('link', rel='alternate'):
+                hreflang = link.get('hreflang')
+                href = link.get('href')
+                if hreflang and href:
+                    if hreflang == language_code:
+                        alternate_urls[url] = href
+                        break
         if debug:
-            st.write(f"Fetching alternates for: {url}")
+            st.write(f"Fetched {url}: {status}")
+    return alternate_urls
 
-        alternate_urls = {}
-        start_idx = 0
-
-        while True:
-            link_start = html.find('<link', start_idx)
-            if link_start == -1:
-                break
-            link_end = html.find('>', link_start)
-            if link_end == -1:
-                break
-            link_tag = html[link_start:link_end + 1]
-            start_idx = link_end + 1
-
-            if 'rel="alternate"' in link_tag:
-                hreflang_start = link_tag.find('hreflang="')
-                if hreflang_start != -1:
-                    hreflang_start += len('hreflang="')
-                    hreflang_end = link_tag.find('"', hreflang_start)
-                    hreflang = link_tag[hreflang_start:hreflang_end]
-
-                    href_start = link_tag.find('href="')
-                    if href_start != -1:
-                        href_start += len('href="')
-                        href_end = link_tag.find('"', href_start)
-                        href = link_tag[href_start:href_end]
-
-                        alternate_urls[hreflang] = href
-
-        alternate_url = alternate_urls.get(language_code)
-        if debug:
-            st.write(f"Alternate URL found: {alternate_url}" if alternate_url else "No alternate URL found.")
-        return alternate_url
-    except requests.RequestException as e:
-        if debug:
-            st.error(f'Error fetching URL: {e}')
-        return None
-
-def update_links(markdown_text, domain, target_language_code, debug):
+async def update_links(markdown_text, domain, target_language_code, debug):
     all_links = get_all_links_from_domain(markdown_text, domain)
     
     if debug:
         st.write(f"Total {len(all_links)} links found in the markdown text.")
 
+    async with aiohttp.ClientSession() as session:
+        valid_links = []
+        tasks = [fetch(session, url) for url in all_links]
+        results = await asyncio.gather(*tasks)
+        for url, status, _ in results:
+            if status == 200:
+                valid_links.append(url)
+
+        alternate_urls = await get_alternate_urls(session, valid_links, target_language_code, debug)
+    
     updated_lines = []
     removed_links = []
-    for url in all_links:
-        sleep(1)  # Delay to avoid being blocked by the server
-        if check_url(url):
-            alternate_url = get_alternate_url(url, target_language_code, debug)
-            if not alternate_url:
-                removed_links.append(url)
-        else:
-            removed_links.append(url)
-    
     for line in markdown_text.split('\n'):
         for url in all_links:
             if url in line:
@@ -95,9 +81,13 @@ def update_links(markdown_text, domain, target_language_code, debug):
                     line = line.replace(f'[{url}]', '')
                     line = line.replace(url, '')
                 else:
-                    alternate_url = get_alternate_url(url, target_language_code, debug)
+                    alternate_url = alternate_urls.get(url)
                     if alternate_url:
                         line = line.replace(url, alternate_url)
+                    else:
+                        removed_links.append(url)
+                        line = line.replace(f'[{url}]', '')
+                        line = line.replace(url, '')
         updated_lines.append(line)
     
     updated_text = '\n'.join(updated_lines)
@@ -153,7 +143,10 @@ if st.button('Update Links'):
         if debug:
             st.write("Starting link update process...")
 
-        updated_markdown, removed_links = update_links(markdown_text, domain, target_language, debug)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        updated_markdown, removed_links = loop.run_until_complete(update_links(markdown_text, domain, target_language, debug))
+        loop.close()
 
         if debug:
             st.write("Link update process completed.")
