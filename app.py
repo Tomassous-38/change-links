@@ -10,6 +10,12 @@ def extract_domain(url):
     parsed_url = urlparse(url)
     return parsed_url.netloc
 
+def is_same_domain(url, domain):
+    parsed_url = urlparse(url)
+    domain_parts = domain.split('.')
+    url_parts = parsed_url.netloc.split('.')
+    return url_parts[-len(domain_parts):] == domain_parts
+
 async def fetch(session, url, allow_redirects=True):
     try:
         async with session.get(url, allow_redirects=allow_redirects) as response:
@@ -28,11 +34,9 @@ async def check_urls(urls, allow_redirects=True):
 def get_all_links_from_domain(markdown_text, domain):
     links = set()
     link_pattern = re.compile(r'\[([^\]]+)\]\((https?://[^\s)]+)\)')
-    domain_pattern = re.compile(rf'^(https?://)?([a-zA-Z0-9-]+\.)?{re.escape(domain)}')
     for match in link_pattern.finditer(markdown_text):
         alt_text, url = match.groups()
-        parsed_url = urlparse(url)
-        if domain_pattern.match(parsed_url.netloc) and not url.endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg')):
+        if is_same_domain(url, domain) and not url.endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg')):
             links.add(url)
     return links
 
@@ -72,7 +76,7 @@ async def update_links(markdown_text, domain, target_language_code, debug_messag
         tasks = [fetch(session, url, allow_redirects=True) for url in all_links]
         results = await asyncio.gather(*tasks)
         for url, status, final_url, _ in results:
-            if status == 200 and extract_domain(final_url).endswith(domain):
+            if status == 200 and is_same_domain(final_url, domain):
                 valid_links.append(final_url)
 
         alternate_urls = await get_alternate_urls(session, valid_links, target_language_code, debug_messages, console_placeholder)
