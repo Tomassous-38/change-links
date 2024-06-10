@@ -16,30 +16,14 @@ def check_url(url):
     except requests.RequestException:
         return False
 
-def get_all_links_from_domain(url, domain, debug):
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        html = response.text
-
-        if debug:
-            st.write(f"Gathering all links from domain: {domain}")
-
-        soup = BeautifulSoup(html, 'html.parser')
-        links = set()
-        for link in soup.find_all('a', href=True):
-            href = link['href']
-            if domain in href:
-                links.add(href)
-
-        if debug:
-            st.write(f"Found {len(links)} links from the domain {domain}")
-
-        return links
-    except requests.RequestException as e:
-        if debug:
-            st.error(f'Error fetching URL: {e}')
-        return set()
+def get_all_links_from_domain(markdown_text, domain):
+    links = set()
+    link_pattern = re.compile(r'\[.*?\]\((https?://[^\s)]+)\)')
+    for match in link_pattern.finditer(markdown_text):
+        url = match.group(1)
+        if domain in url:
+            links.add(url)
+    return links
 
 def get_alternate_url(url, language_code, debug):
     try:
@@ -88,15 +72,7 @@ def get_alternate_url(url, language_code, debug):
         return None
 
 def update_links(markdown_text, domain, target_language_code, debug):
-    all_links = set()
-    lines = markdown_text.split('\n')
-    for line in lines:
-        if '](http' in line:
-            start_idx = line.find('](http') + 2
-            end_idx = line.find(')', start_idx)
-            url = line[start_idx:end_idx]
-            if domain in url:
-                all_links.add(url)
+    all_links = get_all_links_from_domain(markdown_text, domain)
     
     if debug:
         st.write(f"Total {len(all_links)} links found in the markdown text.")
@@ -112,18 +88,16 @@ def update_links(markdown_text, domain, target_language_code, debug):
         else:
             removed_links.append(url)
     
-    for line in lines:
-        if '](http' in line:
-            start_idx = line.find('](http') + 2
-            end_idx = line.find(')', start_idx)
-            url = line[start_idx:end_idx]
-            if url in removed_links:
-                line = line.replace(f'[{url}]', '')
-                line = line.replace(url, '')
-            elif domain in url:
-                alternate_url = get_alternate_url(url, target_language_code, debug)
-                if alternate_url:
-                    line = line.replace(url, alternate_url)
+    for line in markdown_text.split('\n'):
+        for url in all_links:
+            if url in line:
+                if url in removed_links:
+                    line = line.replace(f'[{url}]', '')
+                    line = line.replace(url, '')
+                else:
+                    alternate_url = get_alternate_url(url, target_language_code, debug)
+                    if alternate_url:
+                        line = line.replace(url, alternate_url)
         updated_lines.append(line)
     
     updated_text = '\n'.join(updated_lines)
