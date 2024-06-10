@@ -2,69 +2,56 @@ import streamlit as st
 import aiohttp
 import asyncio
 import re
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 from time import sleep
 
 def extract_domain(url):
     parsed_url = urlparse(url)
-    domain = parsed_url.netloc
-    if domain.startswith('www.'):
-        domain = domain[4:]
-    return domain
+    return parsed_url.netloc
 
-async def fetch(session, url, allow_redirects=True):
+async def fetch(session, url):
     try:
-        async with session.get(url, allow_redirects=allow_redirects) as response:
-            return url, response.status, await response.text(), str(response.url)
+        async with session.get(url) as response:
+            return url, response.status, await response.text()
     except Exception as e:
-        return url, None, str(e), None
+        return url, None, str(e)
+
+async def check_urls(urls):
+    async with aiohttp.ClientSession() as session:
+        tasks = []
+        for url in urls:
+            tasks.append(fetch(session, url))
+        results = await asyncio.gather(*tasks)
+    return results
 
 def get_all_links_from_domain(markdown_text, domain):
     links = set()
-    images = set()
     link_pattern = re.compile(r'\[([^\]]+)\]\((https?://[^\s)]+)\)')
     for match in link_pattern.finditer(markdown_text):
         alt_text, url = match.groups()
-        if extract_domain(url) == domain:
-            if url.endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg')):
-                images.add(url)
-            else:
-                links.add(url)
-    return links, images
+        if domain in url and not url.endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg')):
+            links.add(url)
+    return links
 
-async def get_alternate_urls(session, urls, domain, language_code, debug_messages, console_placeholder):
+async def get_alternate_urls(session, urls, language_code, debug_messages, console_placeholder):
     tasks = []
     for url in urls:
         tasks.append(fetch(session, url))
     results = await asyncio.gather(*tasks)
     
     alternate_urls = {}
-    for url, status, html, final_url in results:
+    for url, status, html in results:
         if status == 200:
-            alternate_urls[url] = ""
+            alternate_urls[url] = None
             soup = BeautifulSoup(html, 'html.parser')
             for link in soup.find_all('link', rel='alternate'):
                 hreflang = link.get('hreflang')
                 href = link.get('href')
                 if hreflang and href:
-                    full_href = urljoin(url, href)
-                    if hreflang == language_code and extract_domain(full_href) == domain:
-                        alternate_urls[url] = full_href
+                    if hreflang == language_code:
+                        alternate_urls[url] = href
                         break
-            # Verify the alternate URL
-            if alternate_urls[url]:
-                _, final_status, _, final_url = await fetch(session, alternate_urls[url])
-                if final_status == 200:
-                    alternate_urls[url] = final_url
-                elif final_status == 404:
-                    alternate_urls[url] = ""
-                    debug_messages.append(f"❌ Alternate URL not found (404): {alternate_urls[url]}")
-                else:
-                    alternate_urls[url] = ""
-                    debug_messages.append(f"❌ Alternate URL invalid: {alternate_urls[url]}")
-        else:
-            alternate_urls[url] = None
         debug_messages.append(f"🔍 Fetched {url}: {status}")
         console_output = "\n".join(debug_messages)
         console_placeholder.markdown(f'<div class="console-output terminal">{console_output}</div>', unsafe_allow_html=True)
@@ -72,9 +59,9 @@ async def get_alternate_urls(session, urls, domain, language_code, debug_message
     return alternate_urls
 
 async def update_links(markdown_text, domain, target_language_code, debug_messages, console_placeholder):
-    all_links, images = get_all_links_from_domain(markdown_text, domain)
+    all_links = get_all_links_from_domain(markdown_text, domain)
     
-    debug_messages.append(f"🔗 Total {len(all_links)} links and {len(images)} images found in the markdown text.")
+    debug_messages.append(f"🔗 Total {len(all_links)} links found in the markdown text.")
     console_output = "\n".join(debug_messages)
     console_placeholder.markdown(f'<div class="console-output terminal">{console_output}</div>', unsafe_allow_html=True)
 
@@ -82,11 +69,11 @@ async def update_links(markdown_text, domain, target_language_code, debug_messag
         valid_links = []
         tasks = [fetch(session, url) for url in all_links]
         results = await asyncio.gather(*tasks)
-        for url, status, _, final_url in results:
+        for url, status, _ in results:
             if status == 200:
                 valid_links.append(url)
 
-        alternate_urls = await get_alternate_urls(session, valid_links, domain, target_language_code, debug_messages, console_placeholder)
+        alternate_urls = await get_alternate_urls(session, valid_links, target_language_code, debug_messages, console_placeholder)
     
     updated_lines = []
     removed_links = []
@@ -98,8 +85,8 @@ async def update_links(markdown_text, domain, target_language_code, debug_messag
                     line = line.replace(url, '')
                 else:
                     alternate_url = alternate_urls.get(url)
-                    if alternate_url is not None:
-                        line = line.replace(url, alternate_url if alternate_url else "")
+                    if alternate_url:
+                        line = line.replace(url, alternate_url)
                     else:
                         removed_links.append(url)
                         line = line.replace(f'[{url}]', '')
@@ -108,7 +95,7 @@ async def update_links(markdown_text, domain, target_language_code, debug_messag
     
     updated_text = '\n'.join(updated_lines)
     updated_text = re.sub(r'\[\d+\]: http.*\n?', '', updated_text)
-    return updated_text, removed_links, alternate_urls, images
+    return updated_text, removed_links, alternate_urls
 
 st.set_page_config(page_title="Markdown Link Updater")
 
@@ -170,7 +157,7 @@ if st.button('Update Links'):
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        updated_markdown, removed_links, alternate_urls, images = loop.run_until_complete(update_links(markdown_text, domain, target_language, debug_messages, console_placeholder))
+        updated_markdown, removed_links, alternate_urls = loop.run_until_complete(update_links(markdown_text, domain, target_language, debug_messages, console_placeholder))
         loop.close()
 
         debug_messages.append("✅ Link update process completed!")
@@ -189,7 +176,7 @@ if st.button('Update Links'):
 
         # Display table of links and their alternatives
         st.markdown("### Links and their Alternatives")
-        data = [{"Original Link": url, "Alternate Link": alt_url if alt_url else ""} for url, alt_url in alternate_urls.items()]
+        data = [{"Original Link": url, "Alternate Link": alt_url} for url, alt_url in alternate_urls.items()]
         st.table(data)
     else:
         st.error("Please paste your markdown text, enter a domain, and enter a target language code.")
