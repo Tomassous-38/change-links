@@ -3,10 +3,12 @@ import aiohttp
 import asyncio
 import re
 from urllib.parse import urlparse, urljoin
-
 from bs4 import BeautifulSoup
+import time
+import json
 
 MAX_REDIRECTS = 4
+MAX_CONCURRENT_REQUESTS = 10
 
 def normalize_domain(domain):
     if not domain.startswith('http://') and not domain.startswith('https://'):
@@ -22,20 +24,16 @@ def is_same_domain(url, domain):
 
 async def fetch(session, url, allow_redirects=True, max_redirects=MAX_REDIRECTS):
     try:
-        async with session.get(url, allow_redirects=allow_redirects) as response:
+        async with session.get(url, allow_redirects=allow_redirects, timeout=10) as response:
             if response.status == 301 and max_redirects > 0:
                 new_url = response.headers.get('Location')
                 if new_url:
                     return await fetch(session, new_url, allow_redirects=allow_redirects, max_redirects=max_redirects - 1)
             return url, response.status, str(response.url), await response.text()
+    except asyncio.TimeoutError:
+        return url, 408, None, "Request timed out"
     except Exception as e:
         return url, None, None, str(e)
-
-async def check_urls(urls, allow_redirects=True):
-    async with aiohttp.ClientSession() as session:
-        tasks = [fetch(session, url, allow_redirects=allow_redirects) for url in urls]
-        results = await asyncio.gather(*tasks)
-    return results
 
 def get_all_links_from_domain(markdown_text, domain):
     links = set()
@@ -46,126 +44,71 @@ def get_all_links_from_domain(markdown_text, domain):
             links.add(url)
     return links
 
-async def get_alternate_urls(session, urls, language_code, debug_messages, console_placeholder):
-    tasks = [fetch(session, url) for url in urls]
-    results = await asyncio.gather(*tasks)
-    
-    alternate_urls = {}
-    for url, status, final_url, html in results:
-        if status == 200:
-            alternate_urls[url] = None
-            soup = BeautifulSoup(html, 'html.parser')
-            for link in soup.find_all('link', rel='alternate'):
-                hreflang = link.get('hreflang')
-                href = link.get('href')
-                if hreflang and href:
-                    if hreflang == language_code:
-                        alternate_urls[url] = urljoin(final_url, href)
+async def process_links(session, urls, language_code, progress_bar):
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+    async def process_url(url):
+        async with semaphore:
+            status, final_url, html = await fetch(session, url)
+            alternate_url = None
+            if status == 200:
+                soup = BeautifulSoup(html, 'html.parser')
+                for link in soup.find_all('link', rel='alternate'):
+                    if link.get('hreflang') == language_code:
+                        alternate_url = urljoin(final_url, link.get('href'))
                         break
-        debug_messages.append(f"🔍 Fetched {url}: {status} -> {final_url}")
-        console_output = "\n".join(debug_messages)
-        console_placeholder.markdown(f'<div class="console-output terminal">{console_output}</div>', unsafe_allow_html=True)
-        await asyncio.sleep(0.2)  # Simulate typing effect
-    return alternate_urls
+            progress_bar.progress(progress_bar.progress() + 1 / len(urls))
+            return url, status, final_url, alternate_url
 
-async def update_links(markdown_text, domain, target_language_code, debug_messages, console_placeholder):
+    tasks = [process_url(url) for url in urls]
+    return await asyncio.gather(*tasks)
+
+async def update_links(markdown_text, domain, target_language_code):
     all_links = get_all_links_from_domain(markdown_text, domain)
     
-    debug_messages.append(f"🔗 Total {len(all_links)} links found in the markdown text.")
-    console_output = "\n".join(debug_messages)
-    console_placeholder.markdown(f'<div class="console-output terminal">{console_output}</div>', unsafe_allow_html=True)
+    progress_bar = st.progress(0)
+    status_text = st.empty()
 
     async with aiohttp.ClientSession() as session:
-        valid_links = []
-        tasks = [fetch(session, url, allow_redirects=True) for url in all_links]
-        results = await asyncio.gather(*tasks)
-        for url, status, final_url, _ in results:
-            if status == 200 and is_same_domain(final_url, domain):
-                valid_links.append(final_url)
-            elif status == 301:
-                debug_messages.append(f"🔄 {url} redirected to {final_url}")
-                console_output = "\n".join(debug_messages)
-                console_placeholder.markdown(f'<div class="console-output terminal">{console_output}</div>', unsafe_allow_html=True)
-                valid_links.append(final_url)
+        results = await process_links(session, all_links, target_language_code, progress_bar)
 
-        alternate_urls = await get_alternate_urls(session, valid_links, target_language_code, debug_messages, console_placeholder)
-
-        final_alternate_urls = {}
-        for url, alt_url in alternate_urls.items():
-            if alt_url:
-                alt_results = await check_urls([alt_url])
-                for alt_url, alt_status, alt_final_url, _ in alt_results:
-                    if alt_status == 200:
-                        final_alternate_urls[url] = alt_final_url
-                    elif alt_status == 301:
-                        debug_messages.append(f"🔄 Alternate {alt_url} redirected to {alt_final_url}")
-                        console_output = "\n".join(debug_messages)
-                        console_placeholder.markdown(f'<div class="console-output terminal">{console_output}</div>', unsafe_allow_html=True)
-                        final_alternate_urls[url] = alt_final_url
-                    elif alt_status == 404:
-                        debug_messages.append(f"❗ Alternate {alt_url} returned 404")
-                        console_output = "\n".join(debug_messages)
-                        console_placeholder.markdown(f'<div class="console-output terminal">{console_output}</div>', unsafe_allow_html=True)
-                        final_alternate_urls[url] = alt_url
+    final_alternate_urls = {url: alt_url for url, status, final_url, alt_url in results if alt_url}
+    removed_links = [url for url, status, final_url, alt_url in results if status != 200 or not alt_url]
 
     updated_lines = []
-    removed_links = []
     for line in markdown_text.split('\n'):
         for url in all_links:
             if url in line:
-                if url in removed_links:
+                alternate_url = final_alternate_urls.get(url)
+                if alternate_url:
+                    line = re.sub(re.escape(url), alternate_url, line)
+                elif url in removed_links:
                     line = line.replace(f'[{url}]', '')
                     line = line.replace(url, '')
-                else:
-                    alternate_url = final_alternate_urls.get(url)
-                    if alternate_url:
-                        line = re.sub(re.escape(url), alternate_url, line)
-                    else:
-                        removed_links.append(url)
-                        line = line.replace(f'[{url}]', '')
-                        line = line.replace(url, '')
         updated_lines.append(line)
     
     updated_text = '\n'.join(updated_lines)
     updated_text = re.sub(r'\[\d+\]: http.*\n?', '', updated_text)
+
+    progress_bar.empty()
+    status_text.success("Link update process completed!")
+
     return updated_text, removed_links, final_alternate_urls
 
-st.set_page_config(page_title="Markdown Link Updater")
+st.set_page_config(page_title="Markdown Link Updater", layout="wide")
 
 st.markdown(
     """
     <style>
-    body {
-        background-color: #2E2E2E;
-        color: #FFFFFF;
-        font-family: monospace;
-        padding-top: 3rem;
-    }
-    .block-container {
-        padding-top: 2rem;
+    .stApp {
+        max-width: 1200px;
+        margin: 0 auto;
     }
     .stButton button {
-        color: #FFFFFF;
-        background-color: #007BFF;
-        border-color: #007BFF;
-        border-radius: 5px;
-        padding: 10px 20px;
-        font-size: 16px;
+        width: 100%;
     }
-    .stButton button:hover {
-        background-color: #0056b3;
-        border-color: #0056b3;
-    }
-    .terminal {
-        background-color: #1E1E1E;
-        padding: 10px;
-        border-radius: 5px;
-        margin-bottom: 20px;
-    }
-    .console-output {
-        font-family: monospace;
-        white-space: pre-wrap;
-        word-wrap: break-word;
+    .help-text {
+        font-size: 0.8em;
+        color: #888;
     }
     </style>
     """,
@@ -174,42 +117,65 @@ st.markdown(
 
 st.title('Markdown Link Updater')
 
-markdown_text = st.text_area("Paste your markdown text here")
-domain_input = st.text_input("Enter the domain (or any URL from the domain) to check")
-target_language = st.text_input("Enter target language code (e.g., en, fr, it)")
-debug = True
+col1, col2 = st.columns(2)
+
+with col1:
+    markdown_text = st.text_area("Paste your markdown text here", height=300)
+    st.markdown('<p class="help-text">Enter the markdown content containing the links you want to update.</p>', unsafe_allow_html=True)
+
+with col2:
+    domain_input = st.text_input("Enter the domain")
+    st.markdown('<p class="help-text">Enter the domain of the website you\'re updating links for (e.g., example.com).</p>', unsafe_allow_html=True)
+
+    target_language = st.text_input("Enter target language code")
+    st.markdown('<p class="help-text">Enter the two-letter language code for the target language (e.g., en, fr, it).</p>', unsafe_allow_html=True)
 
 if st.button('Update Links'):
     if markdown_text and domain_input and target_language:
         domain = normalize_domain(domain_input)
-        debug_messages = ["👋 Hi there! Let's get started."]
-        debug_messages.append(f"🔍 Extracted domain: {domain}")
-        debug_messages.append("⏳ Starting link update process...")
+        
+        try:
+            start_time = time.time()
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            updated_markdown, removed_links, final_alternate_urls = loop.run_until_complete(update_links(markdown_text, domain, target_language))
+            loop.close()
+            end_time = time.time()
 
-        console_placeholder = st.empty()
+            st.success(f"Links updated in {end_time - start_time:.2f} seconds!")
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        updated_markdown, removed_links, final_alternate_urls = loop.run_until_complete(update_links(markdown_text, domain, target_language, debug_messages, console_placeholder))
-        loop.close()
+            st.subheader("Updated Markdown")
+            st.text_area("", value=updated_markdown, height=300)
 
-        debug_messages.append("✅ Link update process completed!")
+            st.subheader("Results Summary")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Total Links", len(final_alternate_urls) + len(removed_links))
+            col2.metric("Updated Links", len(final_alternate_urls))
+            col3.metric("Removed Links", len(removed_links))
 
-        st.success("Links updated! See the updated content below:")
-        st.text_area("Updated Markdown", value=updated_markdown, height=400)
+            if final_alternate_urls:
+                st.subheader("Updated Links")
+                st.table({"Original Link": final_alternate_urls.keys(), "New Link": final_alternate_urls.values()})
 
-        if removed_links:
-            debug_messages.append("🗑️ The following links were removed as they have no alternate version or returned a non-200 status code:")
-            for link in removed_links:
-                debug_messages.append(link)
+            if removed_links:
+                st.subheader("Removed Links")
+                st.write(", ".join(removed_links))
 
-        # Display final console output
-        console_output = "\n".join(debug_messages)
-        console_placeholder.markdown(f'<div class="console-output terminal">{console_output}</div>', unsafe_allow_html=True)
+            st.download_button(
+                label="Download Updated Markdown",
+                data=updated_markdown,
+                file_name="updated_markdown.md",
+                mime="text/markdown"
+            )
 
-        # Display table of links and their alternatives
-        st.markdown("### Links and their Alternatives")
-        data = [{"Original Link": url, "Alternate Link": alt_url} for url, alt_url in final_alternate_urls.items()]
-        st.table(data)
+            st.download_button(
+                label="Download Results as JSON",
+                data=json.dumps({"updated_links": final_alternate_urls, "removed_links": removed_links}, indent=2),
+                file_name="link_update_results.json",
+                mime="application/json"
+            )
+
+        except Exception as e:
+            st.error(f"An error occurred: {str(e)}")
     else:
-        st.error("Please paste your markdown text, enter a domain, and enter a target language code.")
+        st.error("Please fill in all fields before updating links.")
