@@ -48,7 +48,7 @@ async def process_links(session, urls, language_code, progress_bar):
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
     async def process_url(url):
         async with semaphore:
-            status, final_url, html = await fetch(session, url)
+            original_url, status, final_url, html = await fetch(session, url)
             alternate_url = None
             if status == 200:
                 soup = BeautifulSoup(html, 'html.parser')
@@ -57,7 +57,7 @@ async def process_links(session, urls, language_code, progress_bar):
                         alternate_url = urljoin(final_url, link.get('href'))
                         break
             progress_bar.progress(progress_bar.progress() + 1 / len(urls))
-            return url, status, final_url, alternate_url
+            return original_url, status, final_url, alternate_url
 
     tasks = [process_url(url) for url in urls]
     return await asyncio.gather(*tasks)
@@ -136,10 +136,7 @@ if st.button('Update Links'):
         
         try:
             start_time = time.time()
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            updated_markdown, removed_links, final_alternate_urls = loop.run_until_complete(update_links(markdown_text, domain, target_language))
-            loop.close()
+            updated_markdown, removed_links, final_alternate_urls = asyncio.run(update_links(markdown_text, domain, target_language))
             end_time = time.time()
 
             st.success(f"Links updated in {end_time - start_time:.2f} seconds!")
